@@ -3,6 +3,7 @@ package route
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/Dreamacro/clash/log"
 	"github.com/Dreamacro/clash/tunnel/statistic"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 	"github.com/go-chi/render"
 	"github.com/gorilla/websocket"
@@ -81,10 +82,15 @@ func Start(addr string, secret string) {
 		})
 	}
 
-	log.Infoln("RESTful API listening at: %s", addr)
-	err := http.ListenAndServe(addr, r)
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Errorln("External controller error: %s", err.Error())
+		log.Errorln("External controller listen error: %s", err)
+		return
+	}
+	serverAddr = l.Addr().String()
+	log.Infoln("RESTful API listening at: %s", serverAddr)
+	if err = http.Serve(l, r); err != nil {
+		log.Errorln("External controller serve error: %s", err)
 	}
 }
 
