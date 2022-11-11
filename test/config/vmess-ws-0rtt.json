@@ -7,13 +7,17 @@
             "settings": {
                 "clients": [
                     {
-                        "id": "b831381d-6324-4d53-ad4f-8cda48b30811",
-                        "alterId": 0
+                        "id": "b831381d-6324-4d53-ad4f-8cda48b30811"
                     }
                 ]
             },
             "streamSettings": {
-                "network": "tcp"
+                "network": "ws",
+                "security": "none",
+                "wsSettings": {
+                    "maxEarlyData": 128,
+                    "earlyDataHeaderName": "Sec-WebSocket-Protocol"
+                }
             }
         }
     ],
@@ -21,8 +25,5 @@
         {
             "protocol": "freedom"
         }
-    ],
-    "log": {
-        "loglevel": "debug"
-    }
+    ]
 }

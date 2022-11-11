@@ -3,7 +3,8 @@ package process
 import (
 	"encoding/binary"
 	"net"
-	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -15,6 +16,22 @@ const (
 	procpidpathinfosize = 1024
 	proccallnumpidinfo  = 0x2
 )
+
+var structSize = func() int {
+	value, _ := syscall.Sysctl("kern.osrelease")
+	major, _, _ := strings.Cut(value, ".")
+	n, _ := strconv.ParseInt(major, 10, 64)
+	switch true {
+	case n >= 22:
+		return 408
+	default:
+		// from darwin-xnu/bsd/netinet/in_pcblist.c:get_pcblist_n
+		// size/offset are round up (aligned) to 8 bytes in darwin
+		// rup8(sizeof(xinpcb_n)) + rup8(sizeof(xsocket_n)) +
+		// 2 * rup8(sizeof(xsockbuf_n)) + rup8(sizeof(xsockstat_n))
+		return 384
+	}
+}()
 
 func findProcessName(network string, ip net.IP, port int) (string, error) {
 	var spath string
@@ -35,16 +52,13 @@ func findProcessName(network string, ip net.IP, port int) (string, error) {
 	}
 
 	buf := []byte(value)
-
-	// from darwin-xnu/bsd/netinet/in_pcblist.c:get_pcblist_n
-	// size/offset are round up (aligned) to 8 bytes in darwin
-	// rup8(sizeof(xinpcb_n)) + rup8(sizeof(xsocket_n)) +
-	// 2 * rup8(sizeof(xsockbuf_n)) + rup8(sizeof(xsockstat_n))
-	itemSize := 384
+	itemSize := structSize
 	if network == TCP {
 		// rup8(sizeof(xtcpcb_n))
 		itemSize += 208
 	}
+
+	var fallbackUDPProcess string
 	// skip the first xinpgen(24 bytes) block
 	for i := 24; i+itemSize <= len(buf); i += itemSize {
 		// offset of xinpcb_n and xsocket_n
@@ -58,11 +72,15 @@ func findProcessName(network string, ip net.IP, port int) (string, error) {
 		// xinpcb_n.inp_vflag
 		flag := buf[inp+44]
 
-		var srcIP net.IP
+		var (
+			srcIP     net.IP
+			srcIsIPv4 bool
+		)
 		switch {
 		case flag&0x1 > 0 && isIPv4:
 			// ipv4
 			srcIP = net.IP(buf[inp+76 : inp+80])
+			srcIsIPv4 = true
 		case flag&0x2 > 0 && !isIPv4:
 			// ipv6
 			srcIP = net.IP(buf[inp+64 : inp+80])
@@ -70,13 +88,20 @@ func findProcessName(network string, ip net.IP, port int) (string, error) {
 			continue
 		}
 
-		if !ip.Equal(srcIP) {
-			continue
+		if ip.Equal(srcIP) {
+			// xsocket_n.so_last_pid
+			pid := readNativeUint32(buf[so+68 : so+72])
+			return getExecPathFromPID(pid)
 		}
 
-		// xsocket_n.so_last_pid
-		pid := readNativeUint32(buf[so+68 : so+72])
-		return getExecPathFromPID(pid)
+		// udp packet connection may be not equal with srcIP
+		if network == UDP && srcIP.IsUnspecified() && isIPv4 == srcIsIPv4 {
+			fallbackUDPProcess, _ = getExecPathFromPID(readNativeUint32(buf[so+68 : so+72]))
+		}
+	}
+
+	if network == UDP && fallbackUDPProcess != "" {
+		return fallbackUDPProcess, nil
 	}
 
 	return "", ErrNotFound
@@ -96,7 +121,7 @@ func getExecPathFromPID(pid uint32) (string, error) {
 		return "", errno
 	}
 
-	return filepath.Base(unix.ByteSliceToString(buf)), nil
+	return unix.ByteSliceToString(buf), nil
 }
 
 func readNativeUint32(b []byte) uint32 {

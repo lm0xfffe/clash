@@ -14,8 +14,10 @@ import (
 	"github.com/Dreamacro/clash/transport/ssr/tools"
 )
 
-type hmacMethod func(key, data []byte) []byte
-type hashDigestMethod func([]byte) []byte
+type (
+	hmacMethod       func(key, data []byte) []byte
+	hashDigestMethod func([]byte) []byte
+)
 
 func init() {
 	register("auth_aes128_sha1", newAuthAES128SHA1, 9)
@@ -152,6 +154,9 @@ func (a *authAES128) Encode(buf *bytes.Buffer, b []byte) error {
 }
 
 func (a *authAES128) DecodePacket(b []byte) ([]byte, error) {
+	if len(b) < 4 {
+		return nil, errAuthAES128LengthError
+	}
 	if !bytes.Equal(a.hmac(a.Key, b[:len(b)-4])[:4], b[len(b)-4:]) {
 		return nil, errAuthAES128ChksumError
 	}

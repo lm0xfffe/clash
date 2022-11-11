@@ -25,6 +25,7 @@ type Http struct {
 }
 
 type HttpOption struct {
+	BasicOption
 	Name           string `proxy:"name"`
 	Server         string `proxy:"server"`
 	Port           int    `proxy:"port"`
@@ -39,7 +40,9 @@ type HttpOption struct {
 func (h *Http) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	if h.tlsConfig != nil {
 		cc := tls.Client(c, h.tlsConfig)
-		err := cc.Handshake()
+		ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
+		defer cancel()
+		err := cc.HandshakeContext(ctx)
 		c = cc
 		if err != nil {
 			return nil, fmt.Errorf("%s connect error: %w", h.addr, err)
@@ -53,8 +56,8 @@ func (h *Http) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 }
 
 // DialContext implements C.ProxyAdapter
-func (h *Http) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
-	c, err := dialer.DialContext(ctx, "tcp", h.addr)
+func (h *Http) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
+	c, err := dialer.DialContext(ctx, "tcp", h.addr, h.Base.DialOptions(opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", h.addr, err)
 	}
@@ -131,9 +134,11 @@ func NewHttp(option HttpOption) *Http {
 
 	return &Http{
 		Base: &Base{
-			name: option.Name,
-			addr: net.JoinHostPort(option.Server, strconv.Itoa(option.Port)),
-			tp:   C.Http,
+			name:  option.Name,
+			addr:  net.JoinHostPort(option.Server, strconv.Itoa(option.Port)),
+			tp:    C.Http,
+			iface: option.Interface,
+			rmark: option.RoutingMark,
 		},
 		user:      option.UserName,
 		pass:      option.Password,

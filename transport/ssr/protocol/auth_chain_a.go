@@ -13,9 +13,8 @@ import (
 
 	"github.com/Dreamacro/clash/common/pool"
 	"github.com/Dreamacro/clash/log"
+	"github.com/Dreamacro/clash/transport/shadowsocks/core"
 	"github.com/Dreamacro/clash/transport/ssr/tools"
-
-	"github.com/Dreamacro/go-shadowsocks2/core"
 )
 
 func init() {
@@ -278,7 +277,7 @@ func getRandStartPos(length int, random *tools.XorShift128Plus) int {
 	if length == 0 {
 		return 0
 	}
-	return int(random.Next()%8589934609) % length
+	return int(int64(random.Next()%8589934609) % int64(length))
 }
 
 func (a *authChainA) getRandLength(length int, lastHash []byte, random *tools.XorShift128Plus) int {

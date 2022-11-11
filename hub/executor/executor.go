@@ -2,7 +2,6 @@ package executor
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sync"
 
@@ -10,6 +9,7 @@ import (
 	"github.com/Dreamacro/clash/adapter/outboundgroup"
 	"github.com/Dreamacro/clash/component/auth"
 	"github.com/Dreamacro/clash/component/dialer"
+	"github.com/Dreamacro/clash/component/iface"
 	"github.com/Dreamacro/clash/component/profile"
 	"github.com/Dreamacro/clash/component/profile/cachefile"
 	"github.com/Dreamacro/clash/component/resolver"
@@ -24,15 +24,13 @@ import (
 	"github.com/Dreamacro/clash/tunnel"
 )
 
-var (
-	mux sync.Mutex
-)
+var mux sync.Mutex
 
 func readConfig(path string) ([]byte, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, err
 	}
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -123,12 +121,18 @@ func updateDNS(c *config.DNS) {
 		Pool:         c.FakeIPRange,
 		Hosts:        c.Hosts,
 		FallbackFilter: dns.FallbackFilter{
-			GeoIP:  c.FallbackFilter.GeoIP,
-			IPCIDR: c.FallbackFilter.IPCIDR,
-			Domain: c.FallbackFilter.Domain,
+			GeoIP:     c.FallbackFilter.GeoIP,
+			GeoIPCode: c.FallbackFilter.GeoIPCode,
+			IPCIDR:    c.FallbackFilter.IPCIDR,
+			Domain:    c.FallbackFilter.Domain,
 		},
 		Default: c.DefaultNameserver,
 		Policy:  c.NameServerPolicy,
+	}
+
+	// deprecated warnning
+	if cfg.EnhancedMode == C.DNSMapping {
+		log.Warnln("[DNS] %s is deprecated, please use %s instead", cfg.EnhancedMode.String(), C.DNSFakeIP.String())
 	}
 
 	r := dns.NewResolver(cfg)
@@ -142,14 +146,7 @@ func updateDNS(c *config.DNS) {
 	resolver.DefaultResolver = r
 	resolver.DefaultHostMapper = m
 
-	if err := dns.ReCreateServer(c.Listen, r, m); err != nil {
-		log.Errorln("Start DNS server error: %s", err.Error())
-		return
-	}
-
-	if c.Listen != "" {
-		log.Infoln("DNS server listening at: %s", c.Listen)
-	}
+	dns.ReCreateServer(c.Listen, r, m)
 }
 
 func updateHosts(tree *trie.DomainTrie) {
@@ -169,13 +166,10 @@ func updateGeneral(general *config.General, force bool) {
 	tunnel.SetMode(general.Mode)
 	resolver.DisableIPv6 = !general.IPv6
 
-	if general.Interface != "" {
-		dialer.DialHook = dialer.DialerWithInterface(general.Interface)
-		dialer.ListenPacketHook = dialer.ListenPacketWithInterface(general.Interface)
-	} else {
-		dialer.DialHook = nil
-		dialer.ListenPacketHook = nil
-	}
+	dialer.DefaultInterface.Store(general.Interface)
+	dialer.DefaultRoutingMark.Store(int32(general.RoutingMark))
+
+	iface.FlushCache()
 
 	if !force {
 		return
@@ -190,25 +184,11 @@ func updateGeneral(general *config.General, force bool) {
 	tcpIn := tunnel.TCPIn()
 	udpIn := tunnel.UDPIn()
 
-	if err := P.ReCreateHTTP(general.Port, tcpIn); err != nil {
-		log.Errorln("Start HTTP server error: %s", err.Error())
-	}
-
-	if err := P.ReCreateSocks(general.SocksPort, tcpIn, udpIn); err != nil {
-		log.Errorln("Start SOCKS server error: %s", err.Error())
-	}
-
-	if err := P.ReCreateRedir(general.RedirPort, tcpIn, udpIn); err != nil {
-		log.Errorln("Start Redir server error: %s", err.Error())
-	}
-
-	if err := P.ReCreateTProxy(general.TProxyPort, tcpIn, udpIn); err != nil {
-		log.Errorln("Start TProxy server error: %s", err.Error())
-	}
-
-	if err := P.ReCreateMixed(general.MixedPort, tcpIn, udpIn); err != nil {
-		log.Errorln("Start Mixed(http and socks) server error: %s", err.Error())
-	}
+	P.ReCreateHTTP(general.Port, tcpIn)
+	P.ReCreateSocks(general.SocksPort, tcpIn, udpIn)
+	P.ReCreateRedir(general.RedirPort, tcpIn, udpIn)
+	P.ReCreateTProxy(general.TProxyPort, tcpIn, udpIn)
+	P.ReCreateMixed(general.MixedPort, tcpIn, udpIn)
 }
 
 func updateUsers(users []auth.AuthUser) {
